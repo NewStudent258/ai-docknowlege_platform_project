@@ -1,0 +1,199 @@
+"""FastAPI 应用入口"""
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.api.admin import router as admin_router
+from app.api.auth import router as auth_router
+from app.api.chat import router as chat_router
+from app.api.conversation import router as conversation_router
+from app.api.knowledge_base import router as kb_router
+from app.api.document import router as doc_router
+from app.config import settings
+from app.core.chroma_client import init_chroma
+from app.core.exceptions import AppException
+from app.core.logging_config import get_request_id, setup_logging
+from app.core.redis_client import close_async_redis, get_async_redis
+from app.middleware.auth_middleware import AuthMiddleware
+from app.middleware.rate_limit_middleware import RateLimitMiddleware
+from app.middleware.request_id_middleware import RequestIDMiddleware
+
+logger = logging.getLogger(__name__)
+
+
+# ==================== 生命周期 ====================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时初始化日志 + ChromaDB + Redis 预连接 + 配置安全检查"""
+    setup_logging(settings.DEBUG)
+    init_chroma()
+
+    # 诊断：打印默认线程池大小（排查 asyncio.to_thread 排队问题）
+    try:
+        _loop = asyncio.get_running_loop()
+        _default_executor = getattr(_loop, "_default_executor", None)
+        if _default_executor is not None:
+            _max_workers = getattr(_default_executor, "_max_workers", "?")
+            logger.info("线程池诊断: max_workers=%s, type=%s", _max_workers, type(_default_executor).__name__)
+        else:
+            logger.info("线程池诊断: 未找到 _default_executor（可能在首次 to_thread 调用时才创建）")
+    except Exception as _e:
+        logger.info("线程池诊断: 无法读取线程池配置: %s", _e)
+
+    # Redis 异步客户端预连接（避免首次请求时的 2 秒延迟）
+    try:
+        await get_async_redis()
+        logger.info("Redis 异步客户端预连接成功")
+    except Exception as e:
+        logger.warning("Redis 异步客户端预连接失败（非致命）: %s", e)
+
+    # JWT 密钥校验：空字符串或默认值均拒绝启动（生产环境）/ 警告（开发环境）
+    if not settings.JWT_SECRET_KEY or settings.JWT_SECRET_KEY == "change-me":
+        if settings.DEBUG:
+            logger.warning(
+                "⚠ JWT_SECRET_KEY 未设置或仍为默认值，开发环境继续运行，"
+                "生产环境请务必通过 .env 覆盖"
+            )
+        else:
+            raise RuntimeError(
+                "JWT_SECRET_KEY 未设置或仍为默认值，"
+                "请通过 .env 文件设置 JWT_SECRET_KEY"
+            )
+
+    logger.info("DocMind 应用启动完成 (DEBUG=%s)", settings.DEBUG)
+
+    # MCP session manager 的 task group 必须显式启动
+    # （FastAPI mount 子应用不会自动运行子应用 lifespan）
+    if settings.MCP_ENABLED:
+        from app.mcp.server import mcp_session_lifespan
+
+        async with mcp_session_lifespan():
+            yield
+    else:
+        yield
+
+    # 优雅关闭 Redis 连接
+    try:
+        await close_async_redis()
+        logger.info("Redis 异步客户端已关闭")
+    except Exception as e:
+        logger.warning("Redis 异步客户端关闭失败: %s", e)
+
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    debug=settings.DEBUG,
+    lifespan=lifespan,
+)
+
+# CORS — 开发阶段允许前端跨域（最先添加 = 最外层）
+# 多个来源用逗号分隔，通过 .env 的 CORS_ORIGINS 覆盖
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in settings.CORS_ORIGINS.split(",")],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Request ID 中间件（最内层，最先处理请求）
+app.add_middleware(RequestIDMiddleware)
+
+# JWT 认证中间件
+app.add_middleware(AuthMiddleware)
+
+# 限流中间件（对齐 ARCHITECTURE.md §13.2，放在 RequestIDMiddleware 之后）
+app.add_middleware(RateLimitMiddleware)
+
+# 路由注册
+app.include_router(auth_router)
+app.include_router(chat_router)
+app.include_router(conversation_router)
+app.include_router(kb_router)
+app.include_router(doc_router)
+app.include_router(admin_router)
+
+# MCP Server 挂载（ADR-026）
+# 鉴权复用 AuthMiddleware：/mcp 不在其公开白名单中，因此请求必须携带有效 JWT
+if settings.MCP_ENABLED:
+    from app.mcp.server import build_streamable_app
+
+    app.mount(settings.MCP_PATH, build_streamable_app())
+    logger.info("MCP Server 已挂载: %s", settings.MCP_PATH)
+
+
+# ==================== 全局异常处理器 ====================
+
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException):
+    """业务异常 → 扁平错误响应，与 AuthMiddleware 格式统一"""
+    rid = get_request_id()
+    logger.info(
+        "业务异常: %s %s → %s %s",
+        request.method, request.url.path,
+        exc.error_code, exc.error_message,
+        extra={"error_code": exc.error_code, "status_code": exc.status_code},
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": exc.error_code,
+            "message": exc.error_message,
+            "detail": exc.error_detail,
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    rid = get_request_id()
+    logger.info(
+        "参数校验失败: %s %s",
+        request.method, request.url.path,
+        extra={"errors": str(exc.errors())},
+    )
+    return JSONResponse(
+        status_code=422,
+        content={
+            "code": "E9003",
+            "message": "请求参数校验失败",
+            "detail": str(exc.errors()),
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    rid = get_request_id()
+    # 结构化日志：记录完整异常信息（含 traceback）
+    logger.error(
+        "未捕获异常: %s %s → %s",
+        request.method, request.url.path, type(exc).__name__,
+        exc_info=True,
+        extra={"exc_type": type(exc).__name__},
+    )
+    # 生产环境屏蔽堆栈，开发环境返回完整错误信息
+    if settings.DEBUG:
+        detail = f"{type(exc).__name__}: {str(exc)}"
+    else:
+        detail = "请联系管理员"
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": "E9001",
+            "message": "服务器内部错误",
+            "detail": detail,
+        },
+    )
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
