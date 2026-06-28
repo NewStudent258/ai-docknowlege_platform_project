@@ -1,0 +1,608 @@
+# TESTING — 测试策略文档
+
+| 属性 | 值 |
+|:---|:---|
+| 文档版本 | v1.2 |
+| 最后更新 | 2026-06-23 |
+
+---
+
+## 1. 测试策略概述
+
+RAG 系统的质量无法仅靠单元测试和接口测试衡量。核心挑战在于：**检索是否召回了正确的文档？生成的答案是否准确且相关？** 被测试的 RAG 管线各阶段详细设计见 [RAG_PIPELINE.md](../backend/docs/RAG_PIPELINE.md)。
+
+本项目的测试分为 7 个层次：
+
+| 层次 | 目标 | 频率 | 方法 |
+|:---|:---|:---|:---|
+| **单元测试** | 验证函数/类/方法的独立逻辑正确性 | 每次提交 | pytest + vitest，Mock 外部依赖 |
+| **接口测试** | 验证 API 请求/响应格式与错误码 | 每次提交 | httpx + FastAPI TestClient，真实路由链路 |
+| **组件测试** | 验证前端组件的渲染与交互行为 | 每次提交 | vitest + @vue/test-utils |
+| **离线检索评估** | 量化检索效果 | 每次检索代码变更 | 固定测试集 + Recall@K / MRR 指标 |
+| **人工答案评分** | 评估端到端问答质量 | 每 Phase 结束时 | 1-5 分制人工评分 |
+| **回归测试** | 防止已有能力退化 | 每次提交 | 固定问题集快照对比 |
+| **压测** | 确保系统性能达标 | Phase 5 | 并发模拟 + P99 延迟测量 |
+
+---
+
+## 2. 单元测试
+
+### 2.1 后端单元测试（pytest）
+
+覆盖所有 services/、core/、models/、schemas/ 中的纯逻辑，**Mock 所有外部依赖（DB、Redis、外部 API）**。
+
+**测试环境**：
+- 使用 `pytest-asyncio` 支持 async/await
+- 使用 `unittest.mock` Mock SQLAlchemy session、Redis 连接等
+- 使用 `pytest-cov` 输出覆盖率，目标 ≥ 80%
+
+**测试文件规范**：
+- 文件名：`test_{模块名}.py`
+- 测试函数：`test_{被测函数名}_{场景}`
+- 每个测试函数只验证一个行为（单一断言原则）
+
+```python
+# 示例：test_security.py — 命名：test_{被测函数}_{场景}，每个函数验证一个行为
+def test_hash_password_returns_bcrypt_string():
+    result = hash_password("test123")
+    assert result.startswith("$2b$")
+```
+
+### 2.2 前端工具函数单元测试（vitest）
+
+覆盖 `utils/`、`api/`、`stores/` 中的纯 JavaScript 逻辑。
+
+```javascript
+// 示例：sse.test.js
+import { describe, it, expect } from 'vitest'
+import { parseSSEEvent } from '@/utils/sse'
+
+describe('parseSSEEvent', () => {
+  it('解析 meta 事件', () => {
+    const line = 'event: meta'
+    const data = '{"conversation_id": 1}'
+    const result = parseSSEEvent(line, data)
+    expect(result.type).toBe('meta')
+  })
+})
+```
+
+### 2.3 RAG 管线新增阶段测试原则（Phase 5.5）
+
+Phase 5.5 在 RAG 管线中引入了句级修辞过滤（ADR-019）和三层证据审计（ADR-020）两个新阶段。这两个模块的共同特点是：它们是"质量增强"而非"功能必需"——过滤失败应回退到原始数据，审计失败应跳过而非阻断。因此测试需特别关注以下原则：
+
+**分层边界测试**：三层审计模块的每一层都有独立的边界条件，测试需逐层验证。第一层（引用存在性）的边界是"无引用标记"和"伪造标记"；第二层（来源一致性）的边界是"零引用"和"索引越界"；第三层（句级证据）的边界是"空 chunks"和"全部短句"。层间组合也需覆盖：三层全通过 → high / 单层失败 → medium / 多层失败 → low。
+
+**回退路径测试**："宁可放过不可错杀"是修辞过滤的核心策略。测试必须验证：当所有句子都被判定为引用时，系统回退到原始内容而非返回空结果。同理，审计模块在任何异常情况下都应降级跳过，而非阻断主流程。
+
+**确定性验证**：修辞过滤基于规则 + 结构层判断（纯正则 + 字符串操作），同一 chunk 永远返回相同过滤结果。测试应包含确定性验证——对同一输入多次调用，断言输出完全一致。
+
+**SSE 字段传播**：证据审计结果通过 SSE `sources` 事件的 `confidence` / `confidence_note` 字段传递给前端。集成测试需验证这些字段在 SSE 流中的正确传播。
+
+---
+
+## 3. 接口测试
+
+### 3.1 后端 API 接口测试
+
+使用 FastAPI TestClient + httpx，**走真实路由链路**。API 接口测试使用 Mock session 隔离外部依赖；模型层测试（约束校验、关联查询）直接连接开发库 MySQL，测试数据操作后清理。
+
+**覆盖范围**：
+- 正常请求 → 正确响应码 + `{code, message, data}` 格式
+- 参数校验失败 → 422 + E9003 错误码
+- 业务异常 → 对应错误码（E1001/E2001/E5001 等）
+- 认证缺失/过期 → 401
+- 权限不足 → 403
+
+**测试结构**：
+```python
+# 示例：test_auth_api.py — 走真实路由链路，Mock session 隔离外部依赖
+@pytest.mark.asyncio
+async def test_register_success(async_client):
+    response = await async_client.post(
+        "/api/auth/register",
+        json={"username": "testuser", "password": "test123"}
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["code"] == 0
+```
+
+### 3.2 接口测试检查清单
+
+每个 API 端点至少覆盖：
+
+| 场景 | 检查项 |
+|:---|:---|
+| 正常请求 | 状态码 2xx、响应格式 `{code:0, message, data}` |
+| 参数校验 | 必填缺失、类型错误、范围越界 → 422 (E9003) |
+| 业务错误 | 资源不存在 → 404、冲突 → 409、无权 → 403 |
+| 认证授权 | 无 Token → 401、Token 过期 → 401 E5003、权限不足 → 403 E5005 |
+
+---
+
+## 4. 前端组件测试
+
+使用 vitest + @vue/test-utils + jsdom，验证 Vue 组件的渲染与交互。
+
+**覆盖范围**：
+- 组件渲染：关键 DOM 元素存在
+- 用户交互：按钮点击、表单提交触发正确事件
+- 条件渲染：v-if/v-show 在不同状态下的表现
+- Props/Events：父子组件通信正确
+
+```javascript
+// 示例：LoginPage.test.js
+describe('LoginPage', () => {
+  it('渲染用户名和密码输入框', () => {
+    const wrapper = mount(LoginPage)
+    expect(wrapper.find('input[type="text"]').exists()).toBe(true)
+    expect(wrapper.find('input[type="password"]').exists()).toBe(true)
+  })
+})
+```
+
+---
+
+## 5. 离线检索评估
+
+### 5.1 评估指标
+
+| 指标 | 公式 | 说明 | 目标值 |
+|:---|:---|:---|:---|
+| Recall@5 | （检索到的相关 chunk 数）/（知识库中所有相关 chunk 数） | top-5 召回率，衡量检索是否遗漏关键内容 | ≥ 0.85 |
+| Recall@10 | 同上，取 top-10 | RRF 融合前的召回率 | ≥ 0.90 |
+| MRR | `1 / N * Σ 1/rank_i`，rank_i 是第一个相关 chunk 的排名 | 平均倒数排名，衡量最相关文档是否排在前面 | ≥ 0.70 |
+| Precision@5 | top-5 中相关 chunk 数 / 5 | 精确率，衡量检索结果中有效信息占比 | ≥ 0.60 |
+
+### 5.2 评估流程
+
+> 实现脚本：`backend/tests/eval/eval_retrieval.py`。流程：遍历测试集 → 调用检索器（向量/BM25/RRF，通过 `get_vector_store()` 工厂获取向量存储实例）→ 计算 Recall@5/MRR/Precision@5 → 输出对比报告。Phase 3 检索管线完成后执行。
+
+---
+
+## 5a. Ragas 自动化评估（生成质量）
+
+### 5a.1 概述
+
+Ragas（RAG Assessment）是 RAG 领域的标准自动化评估框架，用于量化**生成质量**（检索评估仅衡量检索效果，不衡量答案质量）。集成 Ragas 后，DocMind 的评估体系覆盖：
+
+```
+检索质量（eval_retrieval.py）→ 生成质量（eval_ragas.py）→ 人工评分（human_eval）
+```
+
+### 5a.2 评估指标
+
+| 指标 | 类型 | 说明 | 目标值 |
+|:---|:---|:---|:---|
+| **Faithfulness**（忠实度） | LLM-based | 答案中的陈述是否可由检索上下文支持。逐句分解 → NLI 验证 → 计算支持率 | ≥ 0.80 |
+| **Answer Relevancy**（答案相关性） | LLM-based | 答案是否充分覆盖用户问题的各个方面。生成子问题变体 → 判断覆盖率 | ≥ 0.80 |
+| **Context Precision**（上下文精度） | LLM-based（ragas 原生） | ragas `ContextPrecision` 指标：对每个检索上下文，用 LLM 判断该上下文是否对得出参考答案有用，计算 Average Precision。需 `reference`（参考答案），使用中文 prompt 覆盖默认英文 prompt | ≥ 0.80 |
+| **Context Precision Doc**（文档级 CP） | 自定义计算（诊断列） | top-K 检索结果中来自期望文档的 chunk 占比。使用 `expected_docs` 作为文档级 ground truth，作为辅助诊断指标 | ≥ 0.60（参考值） |
+| **Context Recall**（上下文召回率） | 自定义计算 | 期望文档中有多少被检索到至少一个 chunk。使用 `expected_docs` 作为文档级 ground truth | ≥ 0.80 |
+
+> **注意**：Faithfulness、Answer Relevancy、Context Precision 使用 ragas 内置指标（LLM-based），其中 Context Precision 需要参考答案（`reference`），测试集已根据 `knowledge_samples/samples_1/` 文档为每题编写了参考答案（`eval_test_set.py` 中 `reference` 字段）。Context Precision Doc 和 Context Recall 为自定义文档级实现，前者作为辅助诊断列与 ragas 原生 CP 并存。
+
+### 5a.3 评估流程
+
+> 实现脚本：`backend/tests/eval/eval_ragas.py`。流程：遍历测试集（排除 out-of-scope）→ 调用 `KnowledgePipeline` 获取检索上下文 → 调用 `chat_completion()` 生成答案 → Faithfulness/Answer Relevancy 使用 ragas LLM-based 评分 → Context Precision 使用 ragas 原生 LLM-based 评分（需 reference）→ Context Precision Doc/Context Recall 使用自定义文档级计算 → 输出汇总报告。
+
+**评估 LLM**：使用 `deepseek-v4-flash`（通过 `LangchainLLMWrapper(ChatOpenAI(...))` 包装），以降低评估成本。
+
+**中文适配**：Faithfulness 和 Answer Relevancy 的评估 Prompt 已翻译为中文，并针对企业知识库场景（HR 制度、IT 流程）优化了示例。
+
+### 5a.4 CLI 用法
+
+```bash
+cd backend
+python tests/eval/eval_ragas.py --kb-id 1                          # 基础运行
+python tests/eval/eval_ragas.py --kb-id 1 --model pro              # 使用 pro 模型生成答案
+python tests/eval/eval_ragas.py --kb-id 1 --output json --output md  # 导出报告
+python tests/eval/eval_ragas.py --kb-id 1 --metrics faithfulness,answer_relevancy  # 选择性指标
+```
+
+### 5a.5 目标阈值
+
+阈值经 **2026-06-23 Ragas 全量评估**（28 题，含粗排层）校准，对齐 `backend/ragas_eval.md` 汇总表：
+
+| 指标 | 目标 | 实际均值 | 状态 |
+|:---|:---|:---|:---|
+| Faithfulness（忠实度） | ≥ 0.80 | 0.8436 | ✅ |
+| Answer Relevancy（答案相关性） | ≥ 0.80 | 0.9210 | ✅ |
+| Context Precision（ragas 原生） | ≥ 0.80 | 0.8556 | ✅ |
+| Context Recall（上下文召回率） | ≥ 0.80 | 0.9702 | ✅ |
+
+> **校准说明**：
+> - **首轮阈值（评估框架初建时）**：Faithfulness / Answer Relevancy / Context Recall 初始设为 ≥ 0.70（对标人工评分 4/5），Context Precision 初始设为 ≥ 0.80（检索精度语义升级）。首轮 28 题全量跑通后，Answer Relevancy 均值 0.9210、Context Recall 均值 0.9702 远超标称值，初始 0.70 阈值过于宽松，失去筛选意义。
+> - **校准后**：四项主指标统一上调至 ≥ 0.80，兼顾可行性（均已达标）和区分度（首轮 Faithfulness 最低分 0.23 的 Q4、AR 最低分 0.67 的 Q30，阈值上调后可有效暴露质量波动）。
+> - **Context Precision Doc**（文档级 CP，诊断列）：首轮均值 0.60（top-5 中 40-60% chunk 来自非期望文档），设为 ≥ 0.60 参考值。该指标受检索策略影响大（粗排落地后已从 0.52 升至 0.60），作为检索精度辅助诊断，不纳入主指标达标判断。
+>
+> **实现位置**：`backend/tests/eval/eval_ragas.py` `TARGETS` 字典。
+
+---
+
+## 6. 答案相关性人工评分
+
+### 6.1 评分标准（1-5 分制）
+
+| 分数 | 等级 | 定义 |
+|:---|:---|:---|
+| 5 | 优秀 | 答案完全正确，覆盖所有要点，引用准确，语言通顺 |
+| 4 | 良好 | 答案基本正确，遗漏 1-2 个非关键点或引用存在轻微偏差 |
+| 3 | 合格 | 答案部分正确，有明显遗漏或个别事实错误，但仍能回答用户核心问题 |
+| 2 | 较差 | 答案大部分不相关或错误，对用户帮助有限 |
+| 1 | 无效 | 答案完全错误、答非所问、或 LLM 拒答但库中确有答案 |
+
+### 6.2 评分维度
+
+每次打分需从以下 4 个维度独立评估：
+
+| 维度 | 权重 | 说明 | 检查问题 |
+|:---|:---|:---|:---|
+| **准确性** | 40% | 答案中的事实是否与源文档一致 | "答案中的每条陈述都能在源文档中找到依据吗？" |
+| **完整性** | 30% | 是否涵盖了文档中相关的核心内容 | "用户读完这个答案还需要额外查询吗？" |
+| **溯源正确性** | 20% | 引用的来源文档是否真实、页码是否正确 | "引用的文档确实包含这段信息吗？" |
+| **表达质量** | 10% | 语言是否通顺、结构是否清晰 | "答案易读吗？格式规范吗？" |
+
+**综合分计算**：`总分 = 准确性×0.4 + 完整性×0.3 + 溯源正确性×0.2 + 表达质量×0.1`
+
+**目标**：平均综合分 ≥ 4.0/5.0，且无 1 分评分。
+
+### 6.3 评分流程
+
+1. 从回归测试集中随机抽取 10 个问题
+2. 运行系统获取完整答案（含引用来源）
+3. 人工对照源文档逐维度打分
+4. 记录评分表，每次 Phase 结束时执行一次
+
+> 人工评分记录模板：`backend/tests/eval/human_eval_template.md`——10 题 × 4 维度评分表，含评分标准、逐题记录区、汇总表、问题记录区。
+
+### 6.4 多轮对话评分补充（Phase 4 第 2 轮人工评分）
+
+第 2 轮人工评分与第 1 轮有本质区别：第 1 轮评估的是**单轮独立问答**质量，第 2 轮评估的是**多轮对话**质量。
+
+#### 评估对象差异
+
+| 差异点 | 第 1 轮（单轮） | 第 2 轮（多轮） |
+|:---|:---|:---|
+| 评估对象 | 独立问题 × 10 | Session × 5（每 Session 含 3-10 轮） |
+| 评分层级 | 仅问题级（4 维度） | **轮次级（4 维度）+ Session 级（3 跨轮维度）** |
+| 核心关注 | 答案准确性 + 来源引用 | 单轮质量 + **上下文理解** + **RAG 不退化** |
+
+#### 跨轮维度（Session 级，第 2 轮新增）
+
+| 维度 | 权重 | 检查问题 | 说明 |
+|:---|:---|:---|:---|
+| **上下文连贯性** | 25% | 后续轮次是否正确理解了前面轮次的上下文？代词指代是否消解正确？ | 多轮对话的核心体验指标 |
+| **RAG 保活性** | 20% | 第 2 轮及之后是否仍在检索知识库并引用来源？（而非退化为纯聊天） | Phase 4 关键验证点——防止 RAG 静默退化 |
+| **历史记忆准确性** | 10% | 系统是否记住了前面轮次的关键信息？有没有遗忘或混淆？ | 辅助指标 |
+
+#### 综合分计算
+
+```
+Session 综合分 = (Σ 各轮轮次分 / 轮数) × 0.45
+               + 上下文连贯性 × 0.25
+               + RAG 保活性 × 0.20
+               + 历史记忆准确性 × 0.10
+```
+
+**权重设计理念**：轮次均分占 45%（单轮质量是基础），上下文连贯性 25%（多轮核心价值），RAG 保活性 20%（Phase 4 关键验证点），历史记忆准确性 10%（辅助指标）。
+
+#### 对比方式
+
+- **同口径对比**：第 2 轮的「轮次均分」与第 1 轮的 4.38/5.0 直接对比，验证多轮场景下单轮质量是否下降
+- **增量评估**：第 2 轮独有的 Session 综合分衡量多轮对话整体体验
+- **目标**：轮次均分 ≥ 4.0（不建议低于第 1 轮），Session 综合分平均 ≥ 4.0
+
+> 完整评分表模板见 `backend/tests/eval/human_eval_template.md`「第 2 轮：多轮对话人工评分」章节。
+>
+> **评估结果（2026-06-09）**：
+> - Session 综合分平均：**4.76/5.0** ✅ 远超 ≥ 4.0 目标
+> - 轮次均分：4.62/5.0（vs 第 1 轮 4.38，↑ +0.24）
+> - RAG 保活性：5.0/5.0 满分（23 轮均有 sources，未退化）
+> - 上下文连贯性：4.8/5.0（平均）
+> - 无上下文断裂、无指代消解失败、无 RAG 退化
+> - 发现的问题：无关文档混入（3次）、编造细节（S5-T10）、回答立场软化（S5-T9）
+
+---
+
+## 7. 回归测试集
+
+### 7.1 设计原则
+
+- 固定 20-30 个问题，覆盖知识库中的所有文档
+- 每个问题必须标注：**期望引用的源文档文件名**（至少 1 个）
+- 问题类型多样化：精确查询、模糊语义查询、跨文档查询、多轮对话
+- 测试集不随功能迭代而修改，仅当知识库内容发生结构性变化时更新
+- 每次代码提交后运行全量回归
+
+### 7.2 测试集结构
+
+```json
+[
+  {
+    "id": 1,
+    "question": "入职需要开通哪些账号？",
+    "type": "单文档精确查询",
+    "kb_id": 1,
+    "expected_docs": ["入职指南.md"],
+    "min_relevant_chunks": 1
+  },
+  {
+    "id": 5,
+    "question": "生产数据库密码和生产服务器权限分别怎么申请？",
+    "type": "跨文档查询",
+    "kb_id": 1,
+    "expected_docs": ["系统权限申请流程.md"],
+    "min_relevant_chunks": 2
+  },
+  {
+    "id": 7,
+    "question": "VPN怎么连？",
+    "type": "简称匹配",
+    "kb_id": 1,
+    "expected_docs": ["VPN配置指南.md"],
+    "min_relevant_chunks": 1
+  },
+  {
+    "id": 9,
+    "question": "会议室预约后如果不用会怎么样？",
+    "type": "蕴含推理",
+    "kb_id": 1,
+    "expected_docs": ["会议室预约规则.md"],
+    "min_relevant_chunks": 1
+  }
+]
+```
+
+> 以上为单轮查询示例（覆盖精确查询/跨文档/简称匹配/蕴含推理 4 种类型），完整测试集需扩充至 25-30 题。Phase 4 新增多轮会话测试集（见 §7.4）。
+
+### 7.3 回归检查项
+
+| 检查项 | 方法 | 通过标准 |
+|:---|:---|:---|
+| 检索召回 | 脚本自动计算 | Recall@5 ≥ 0.85，且不低于上一版本 |
+| 答案非空 | 接口返回检查 | 所有问题均返回非空答案 |
+| 引用来源有效 | 脚本校验 | `sources` 事件中的 doc_id 均在 MySQL 中存在 |
+| SSE 格式正确 | 脚本校验 | 所有问题均收到 `meta` → `message` → `sources` → `finish` 事件序列 |
+| 错误率 | 脚本统计 | 无 E9xxx / E4xxx 系统级错误 |
+
+> Phase 3 实现：回归测试脚本 `backend/tests/regression/regression_test.py`，遍历测试集、调用 `/api/chat`、自动检查上述项并输出报告。Phase 3 问答 API 完成后执行。
+
+### 7.4 多轮 RAG 回归测试（Phase 4 新增）
+
+多轮对话场景下，历史消息注入可能引入以下退化：
+- 历史消息挤占检索结果 → RAG 退化为纯聊天
+- 旧轮次 `[来源N]` 编号与当前轮次检索结果冲突
+- assistant 消息注入导致 LLM 混淆角色边界
+
+#### 测试集设计
+
+```json
+[
+  {
+    "session_id": "multi-turn-001",
+    "name": "报销制度三连问",
+    "kb_id": 1,
+    "turns": [
+      {
+        "turn": 1,
+        "question": "介绍一下公司的报销制度",
+        "expected": {
+          "has_answer": true,
+          "has_sources": true,
+          "min_chunks": 1,
+          "expected_docs": ["报销制度.md"]
+        }
+      },
+      {
+        "turn": 2,
+        "question": "审批流程需要多长时间？",
+        "expected": {
+          "has_answer": true,
+          "has_sources": true,
+          "min_chunks": 1,
+          "expected_docs": ["报销制度.md"],
+          "context_dependent": true
+        }
+      }
+    ]
+  }
+]
+```
+
+> 完整测试集 5 Session × 23 轮，见 `backend/tests/eval/eval_multi_turn_test_set.py`。
+
+#### 回归检查项（多轮）
+
+| 检查项 | 方法 | 通过标准 |
+|:---|:---|:---|
+| 每轮检索召回 | 脚本自动计算 | 全部 turn Recall@5 ≥ 0.85 |
+| 每轮答案非空 | 接口返回检查 | 全部 turn 返回非空答案 |
+| 每轮引用来源有效 | 脚本校验 | 全部 turn `sources` 中的 doc_id 均在 MySQL 中存在 |
+| 上下文连贯 | 人工/LLM 评估 | Turn 2/3 的答案与 Turn 1 主题一致，未出现主题漂移 |
+| RAG 不退化 | 脚本校验 | Turn 2/3 仍返回 `sources` 事件（未被历史挤掉检索结果） |
+| 历史截断不报错 | 脚本校验 | 20+ 轮后仍正常返回答案和来源 |
+
+> **重要**：单轮测试全部通过 ≠ 多轮没问题。这是 Phase 4 最容易出 Bug 的地方——历史注入逻辑错误会导致 RAG 静默退化为普通聊天，而单轮测试无法发现。
+
+#### 脚本与测试集
+
+| 文件 | 用途 |
+|:---|:---|
+| `backend/tests/eval/eval_multi_turn_test_set.py` | 多轮测试集：5 个 Session（报销三连问 / 主题切换 / 跨文档追问 / 指代消解 / 长对话保活），共 23 轮 |
+| `backend/tests/regression/regression_multi_turn_test.py` | 多轮回归脚本：复用 `conversation_id` 实现真正的多轮对话，含 RAG 退化检测 + 上下文断裂检测 + Session×Turn 结果矩阵 |
+
+```bash
+# 运行多轮回归测试
+python tests/regression/regression_multi_turn_test.py --kb-id 1 --token "xxx"
+python tests/regression/regression_multi_turn_test.py --kb-id 1 --base-url http://localhost:8000 --token "xxx"
+```
+
+---
+
+## 8. 压测（Phase 5）
+
+### 8.1 压测目标
+
+1. 验证多并发场景下性能指标达标（P50 ≤ 3s、P99 ≤ 10s、错误率 ≤ 1%）
+2. 为限流中间件提供数据支撑：取系统吞吐上限的 70% 作为限流阈值
+
+> 压测应在 Docker Compose 生产级环境执行（Nginx SSE buffering 影响 TTFT 测量、Celery prefork vs solo 行为不同），**不 Mock LLM**（真实调用 DeepSeek API）。
+
+> **环境准备、测试场景、Locust 命令、执行流程**：详见 [backend/tests/performance/README.md](../../backend/tests/performance/README.md)（操作手册）。
+
+### 8.2 测量指标与通过标准
+
+| 指标 | 目标值 | 测量方式 |
+|:---|:---|:---|
+| 端到端 P50 延迟 | ≤ 3s | Locust `POST /api/chat` response time（请求→`finish` 事件） |
+| 端到端 P99 延迟 | ≤ 10s | Locust P99 |
+| 首 token 延迟 P50 | ≤ 1.5s | Locust 自定义 `TTFT` 指标（请求→首个 `message` 事件） |
+| 错误率 | ≤ 1% | HTTP 非 2xx 或 SSE 缺少 `finish` 事件 |
+| 吞吐量 | ≥ 2 req/s | Locust RPS（10 并发下） |
+| Token 消耗 | ≤ 4000 tokens/请求 | Trace 系统聚合 `input_tokens + output_tokens` |
+
+> **脚本设计要点、执行流程**：详见 [backend/tests/performance/README.md](../../backend/tests/performance/README.md)（操作手册）。
+
+### 8.3 结果分析与限流阈值
+
+压测已完成（2026-06-18），四场景均零失败：
+
+| 场景 | 并发 | P50 (s) | P99 (s) | TTFT P50 (s) | 错误率 | RPS | 结论 |
+|:---|:---|:---|:---|:---|:---|:---|:---|
+| 基准 | 1 | 5.5 | 13.0 | 0.69 | 0% | 0.3 | 基线 |
+| 日常 | 5 | 6.7 | 20.0 | 0.87 | 0% | 0.4 | ✅ 系统稳定 |
+| 峰值 | 10 | 7.1 | 20.0 | 0.81 | 0% | 0.6 | ✅ 系统稳定 |
+| 极限 | 20 | 7.4 | 20.0 | 0.80 | 0% | 1.2 | ✅ 未触及上限 |
+
+> **端到端 P50/P99 名义不达标**（目标 P50≤3s/P99≤10s），但根因是 DeepSeek LLM 流式生成耗时（单次 3-20s，占端到端延迟的 89%），检索管线自身 TTFT P50 仅 690-920ms，远优于 1.5s 目标。降低端到端延迟的唯一手段是换用更快的 LLM。详见 [压测报告](../../backend/tests/performance/STRESS_TEST_REPORT.md)。
+
+**限流阈值推算**（对齐 ARCHITECTURE.md §12.2.3）：
+1. 从极限测试找到错误率突破 1% 时的并发数 `N_break`
+2. 从峰值/极限测试找到 P99 超过 10s 时的并发数 `N_p99`
+3. 安全并发上限 `N_safe = min(N_break, N_p99)`
+4. 单用户请求频率 `rps_per_user` 从日常负载场景统计
+5. 限流阈值 = `N_safe × rps_per_user × 60 × 0.7`（70% 安全系数，换算为每分钟）
+
+**本次推算**（2026-06-18）：
+- 20 并发零失败 → 未找到 N_break，N_safe 保守取 20
+- rps_per_user = 0.4 RPS / 5 用户 = 0.08 req/s（日常场景）
+- 限流阈值 = 20 × 0.08 × 60 × 0.7 = **67.2 → 取整 60 req/min**
+- 已更新 `config.py`：`RATE_LIMIT_CHAT_PER_MINUTE = 60`
+
+> 推算完成后更新 `config.py` 中的限流占位值（chat / upload / default），并开启限流验证。
+
+### 8.4 风险与预案
+
+| 风险 | 预案 |
+|:---|:---|
+| DeepSeek API 限流/降速 | 关注 Trace 中 LLM 阶段的 TTFT 和 total_ms |
+| ChromaDB 嵌入式高并发锁竞争 | 极限场景关注 `vector_ms`，P99 > 2s 考虑迁移 client-server 模式 |
+| Redis 连接池耗尽 | BM25 进程内缓存（60s TTL）应有效减少 Redis 访问 |
+| 数据库连接池不足 | 确认 `pool_size=20, max_overflow=10` |
+| Token 消耗超预期 | Trace 聚合排查 Prompt 预算逻辑 |
+
+---
+
+## 9. 修辞过滤与证据审计测试策略（Phase 5.5）
+
+Phase 5.5 新增的修辞过滤和证据审计是 RAG 管线中的"质量增强"阶段。它们的测试策略与传统单元测试有共同之处，但也有独特的关注点。
+
+### 9.1 句级修辞过滤测试策略
+
+修辞过滤由两个函数组成：`detect_sentence_role()`（规则 + 结构层判断）和 `filter_chunk_sentences()`（过滤 + 回退逻辑）。
+
+**规则层覆盖**：每个 `_REFERENTIAL_PATTERNS` 正则至少 1 个命中用例 + 1 个不命中用例。新增正则模式时必须补充对应测试。重点关注"伪装引用"（陈述知识中包含类似标记的文本）和"隐蔽引用"（未匹配任何正则的引用文本）。
+
+**结构层覆盖**：JSON 开头（`{`）、代码块（` ``` `）等结构检测。测试需覆盖嵌套场景（chunk 内部分句子是 JSON）。
+
+**回退路径覆盖**：全引用句 → 回退到原始内容（核心安全网）、混合内容 → 仅保留陈述句、空/空白 → 原样返回。
+
+**端到端集成**：在 `knowledge_pipeline()` 中验证修辞过滤步骤被正确插入（Rerank 之后、Evidence Highlight 之前），且过滤后的 chunk 不影响后续句子匹配。
+
+### 9.2 三层证据审计测试策略
+
+证据审计的核心测试挑战在于**三层叠加的组合复杂性**。
+
+**逐层独立测试**：
+
+| 层次 | 边界输入 | 核心断言 |
+|:---|:---|:---|
+| 第一层（引用存在性） | 空答案 / 无 `[来源N]` / 伪造标记 `来源1`（无方括号）/ 正常 `[来源1]` | `has_citation` 和 `cited_indices` 正确性 |
+| 第二层（来源一致性） | 零引用 / 单文档 / 两文档 / 三文档+ / 索引越界 | `consistency_status` 枚举值正确 |
+| 第三层（句级证据） | 全有证据 / 部分无证据 / 大面积无证据 / 跳过引用句和短句 / 空 chunks | `evidence_status` 和阈值边界 |
+
+**综合置信度矩阵**：
+
+| 第一层 | 第二层 | 第三层 | 预期置信度 |
+|:---|:---|:---|:---|
+| ✅ 有引用 | ✅ consistent | ✅ supported | high |
+| ❌ 无引用 | — | — | medium 或 low |
+| ✅ 有引用 | ❌ dispersed | ❌ unsupported | low |
+| ✅ 有引用 | ✅ consistent | ⚠️ partial | medium |
+
+**容错与降级**：审计函数在任何异常输入（None、空字符串、空列表）下不得抛异常，必须返回默认置信度。审计失败时主流程不受影响（降级跳过）。
+
+**SSE 传播测试**：验证 `confidence` / `confidence_note` 字段在 `sources` SSE 事件中正确传递，前端 `MessageItem.vue` 根据置信度展示对应警告。
+
+---
+
+## 10. 测试执行计划
+
+| Phase | 测试活动 | 测试类型 | 产出 | 准入条件 |
+|:---|:---|:---|:---|:---|
+| Phase 1 | 认证模块单元测试 | 单元测试 | JWT / 密码哈希 / Service 逻辑 | Phase 2 准入 |
+| Phase 1 | 认证 API 接口测试 | 接口测试 | 注册/登录 正常 + 异常用例 | Phase 2 准入 |
+| Phase 1 | Schema 校验测试 | 单元测试 | RegisterRequest / LoginRequest 边界值 | Phase 2 准入 |
+| Phase 1 | 前端组件测试 | 组件测试 | LoginPage / AppLayout / 路由守卫 | Phase 2 准入 |
+| Phase 2 | 知识库 CRUD + 文档管理 API 测试 | 接口测试 | 正常 + 错误码覆盖 | Phase 3 准入 |
+| Phase 2 | Celery 流水线测试 | 单元测试 | 幂等锁 / 解析容错 / 分块 / checkpoint | Phase 3 准入 |
+| Phase 2 | 前端 KB/Doc 页面组件测试 | 组件测试 | 网格/表格渲染、交互、状态轮询 | Phase 3 准入 |
+| Phase 2.5 | visibility Schema 校验测试 | 单元测试 | KnowledgeBaseCreate/Update visibility 字段校验 + 默认值 | ✅ |
+| Phase 2.5 | KB 权限矩阵接口测试 | 接口测试 | public KB 非 owner 可读/不可写；private KB 非 owner 拒绝；admin 全局可读 + 管理写 | ✅ |
+| Phase 2.5 | 公共 KB 列表接口测试 | 接口测试 | GET /public 分页 + 仅返回 public+active + 含 username | ✅ |
+| Phase 2.5 | 文档接口权限矩阵测试 | 接口测试 | 上传/reprocess 仅 owner；查看/分块/删除 owner + admin；18 用例全覆盖 | ✅ |
+| Phase 2.5 | 前端公共 KB 页组件测试 | 组件测试 | PublicKnowledgeList 渲染 + 无编辑/删除/新建按钮 | ✅ |
+| Phase 3 | 检索器 + RRF 测试 | 单元测试 | 检索正确性 + RRF 排序验证 | Phase 4 准入 |
+| Phase 3 | 问答 SSE API 测试 | 接口测试 | SSE 事件序列 + 错误码 | Phase 4 准入 |
+| Phase 3 | 前端 ChatPage + SSE 解析测试 | 组件+单元测试 | 消息发送/流式渲染/停止/来源引用 | Phase 4 准入 |
+| Phase 3 完成 | 离线检索评估 | 检索评估 | BM25 vs 向量 vs RRF 的 Recall@5/MRR 对比报告 | Phase 4 准入 |
+| Phase 3 完成 | 回归测试集初版建立 | 回归测试 | 25-30 个固定问题 + 期望文档标注 | Phase 4 准入 |
+| Phase 3 完成 | 人工答案评分（第 1 轮） | 人工评估 | 10 题 × 4 维度评分表 | Phase 4 准入 | ✅ 已完成（2026-06-04，4.38/5.0） |
+| Phase 4 | 会话 CRUD API 接口测试 | 接口测试 | 会话 CRUD 正常流程 + 错误码 + 权限拒绝 | Phase 5 准入 |
+| Phase 4 | 滑动窗口记忆测试 | 单元测试 | 各池子独立截断不互侵（History 超限/Retrieval 超限/同时超限） | Phase 5 准入 |
+| Phase 4 | 多轮 RAG 回归测试 | 接口测试 | 5 Session × 23 轮全部通过：每轮检索召回 + 答案非空 + 引用有效 + RAG 未退化（详见 TEST_CASES.md §6.3） | ✅ 已完成（2026-06-09） |
+| Phase 4 | 前端会话列表组件测试 | 组件测试 | Sidebar 会话 CRUD 交互 | Phase 5 准入 |
+| Phase 4 | 错误处理测试 | 单元测试 | 异常→HTTP 状态码映射 / 生产环境堆栈屏蔽 / 未知异常兜底（3 用例） | Phase 5 准入 |
+| Phase 4 | Refresh Token 测试 | 接口测试 | Token 刷新 / Rotation（旧 token 失效）/ 主动吊销（6 用例） | Phase 5 准入 |
+| Phase 4 | 结构化日志测试 | 单元测试 | 请求入口/检索耗时/LLM 调用日志格式校验（3 用例） | Phase 5 准入 |
+| Phase 4 完成 | 人工答案评分（第 2 轮） | 人工评估 | 5 Session 修正后平均综合分 **4.76/5.0** ✅ 远超 ≥ 4.0 目标。轮次均分 4.62/5.0（vs 第 1 轮 4.38 ↑ +0.24），RAG 保活性 5.0/5.0 满分 | ✅ 已完成（2026-06-09） |
+| Phase 5 | 全量回归测试 | 回归测试 | 遍历完整测试集，检查召回/非空/来源/SSE/错误率 | 上线准入 |
+| Phase 5 | 压测 | 性能测试 | Locust 4 场景，P50≤3s / P99≤10s。**压测完成后据此设定限流阈值** | 上线准入 |
+| Phase 5 | Admin 接口测试 | 接口测试 | Admin 端点权限校验 + 数据聚合正确性（6 用例，A7.1-A7.6） | 上线准入 |
+| Phase 5 | 限流测试 | 接口测试 | IP/用户级频率限制生效验证（5 用例，A8.1-A8.5，阈值来自压测结果） | 上线准入 |
+| Phase 5 | 意图识别测试 | 单元测试 | 分类正确性 6 + 路由 2 + 降级 2 + META regex 2 + CASUAL regex 迁入验证 1 = 13 用例（U10.1-U10.13） | 上线准入 |
+| Phase 5 | sources 智能预览测试 | 单元+组件 | 定位正确性 3 + SSE 格式 2 + 前端渲染 1 = 6 用例（U11.1-U11.6） | 上线准入 |
+| Phase 5 | 性能埋点验证 | 单元测试 | 检索耗时 1 + LLM 耗时 1 + 日志格式校验 2 = 4 用例（U12.1-U12.4） | 上线准入 |
+| Phase 5 | 最终人工评分 | 人工评估 | 最终 10 题 × 4 维度评分，平均综合分 ≥ 4.0 | 上线准入 |
+| Phase 5.5 | 修辞过滤测试 | 单元测试 | `detect_sentence_role()` 12 + `filter_chunk_sentences()` 6 用例，覆盖正则模式/结构检测/回退策略/确定性（P5.5-SF.1-SF.7） | ✅ 已完成 |
+| Phase 5.5 | 三层证据审计测试 | 单元测试 | 引用存在性 5 + 来源一致性 5 + 句级证据 7 + 置信度 4 + 集成 4 = 25 用例（P5.5-EA.1-EA.14） | ✅ 已完成 |
+| Phase 5.5 | 前端置信度展示测试 | 组件测试 | MessageItem.vue 置信度警告组件渲染 + confidence/confidence_note 字段展示 | ✅ 已完成（2026-06-16） |
+| Phase 5.5 | DashScope Reranker 测试 | 单元测试 | 精排正确性 + API 异常降级 + 空/单输入边界 + top_k 截取（P5.5-RR.1-P5.5-RR.22） | ✅ 已完成（2026-06-16） |
+| Phase 5.5 | CoarseRanker 单元测试 | 单元测试 | 阈值过滤/边界/降级/管线集成（P55-CR.1-P55-CR.12） | ✅ 已完成（2026-06-23，21 用例通过） |
+| Phase 5.5 | Ragas 评估回归 | 评估 | 粗排落地后 CPdoc/CP 新基线跑分 | ✅ 已完成（2026-06-23，四项指标全部达标） |
+| Phase 5.5 | 污染问题回归测试 | 回归测试 | 使用已知失败案例（SSE 示例/测试用例/PRD 背景引用）验证治理效果 | ✅ 已完成（2026-06-16） |
+| Phase 6 | 高级功能测试 | 按需 | 结构感知分块 / LLM 摘要压缩等 8 项（详见 TEST_CASES.md §8.4） | 不设时限 |
+
+---
+
+## 11. 相关文档
+
+- [测试用例跟踪](TEST_CASES.md) — 各 Phase 测试用例清单与执行状态
+- [产品需求文档](../PRD.md) — 验收标准章节
+- [架构设计文档](../ARCHITECTURE.md) — 检索/问答流程细节
+- [接口文档](../../backend/docs/API.md) — `/api/chat` SSE 事件格式
+- [开发指南](../DEVELOPMENT.md)
+- [开发排期](../ROADMAP.md)
+- [UI 设计规范](../frontend/docs/UIDESIGN.md)
