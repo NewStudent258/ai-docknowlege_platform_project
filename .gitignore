@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+
+# Environment（含各子目录，backend/.env 保存真实 API Key，禁止入库）
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# ChromaDB
+chroma_data/
+
+# LightRAG 图谱与向量持久化数据
+lightrag_data/
+
+# 测试样本（性能压测用，体积大，不纳入版本控制）
+knowledge_samples/
+
+# Uploads
+uploads/
+
+# 测试与构建缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+
+# Node
+node_modules/
+*.local
+
+# Vite
+.vite/
+frontend/dist/
+
+
+# OS
+.DS_Store
+Thumbs.db
+/CLAUDE.md
+/backend/knowledge_samples/
+/.workbuddy/
+/scripts/generate_sample_docs.py
+/.trae/
