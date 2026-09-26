@@ -1,31 +1,44 @@
 /* ===== CSS 变量（Design Token） ===== */
 :root {
-    /* ===== 品牌/强调色（纯黑白） ===== */
-    --dm-primary: #1A1A1A;
-    --dm-primary-hover: #000000;
-    --dm-primary-light: #F5F5F5;
-    --dm-primary-hover-light: #EBEBEB;
+    /* ===== 品牌/强调色（深蓝体系） =====
+       主色选用 #1E3A8A（blue-900 系），在白色卡片与浅灰页面上
+       均满足 WCAG AA 对比度（白字于主色背景对比度约 10.4:1）。
+       层级：primary（常规）→ hover（加深）→ active（最深） */
+    --dm-primary: #1E3A8A;
+    --dm-primary-hover: #172E6E;
+    --dm-primary-active: #122455;
+    --dm-primary-light: #EEF2FF;
+    --dm-primary-hover-light: #E0E7FF;
+    --dm-primary-border: #C7D2FE;
+    /* 主色浅色梯度（用于 hover 态、选中态背景、进度条底槽） */
+    --dm-primary-50: #F0F4FF;
+    --dm-primary-100: #E0E7FF;
+    --dm-primary-200: #C7D2FE;
+    --dm-primary-300: #A5B4FC;
+    --dm-primary-600: #2B4BA8;
+    --dm-primary-700: #1E3A8A;
+    --dm-primary-800: #172E6E;
 
     /* ===== 语义色 ===== */
-    --dm-success: #10B981;
-    --dm-warning: #F59E0B;
-    --dm-danger: #EF4444;
-    --dm-info: #3B82F6;
+    --dm-success: #059669;
+    --dm-warning: #D97706;
+    --dm-danger: #DC2626;
+    --dm-info: #2563EB;
 
     /* ===== 语义色浅色背景 ===== */
     --dm-success-light: #ECFDF5;
     --dm-warning-light: #FFFBEB;
     --dm-danger-light: #FEF2F2;
-    --dm-danger-border: rgba(239, 68, 68, 0.2);  /* --dm-danger 20% 透明度，用于分隔线/边框 */
+    --dm-danger-border: rgba(220, 38, 38, 0.2);  /* --dm-danger 20% 透明度，用于分隔线/边框 */
     --dm-info-light: #EFF6FF;
 
     /* ===== Evidence 高亮标记（RAG 引用片段，需比 --dm-warning-light 更醒目） ===== */
     --dm-evidence-highlight-bg: #FFF3B0;
 
     /* ===== 语义色补充（对齐 UIDESIGN.md） ===== */
-    --dm-purple: #8B5CF6;
+    --dm-purple: #7C3AED;
     --dm-purple-light: #F5F3FF;
-    --dm-warning-dark: #856404;
+    --dm-warning-dark: #92400E;
 
     /* ===== 孤儿会话警告横幅（会话关联 KB 被删除时显示） ===== */
     --dm-orphan-bg: #FFF8E1;
@@ -39,10 +52,10 @@
     /* ===== 孤儿会话不可访问变体（紫色系） ===== */
     --dm-orphan-unavailable-bg: #F5F3FF;
     --dm-orphan-unavailable-border: #C4B5FD;
-    --dm-orphan-unavailable-accent: #8B5CF6;
+    --dm-orphan-unavailable-accent: #7C3AED;
     --dm-orphan-unavailable-text: #3C1A70;
 
-    /* ===== JSON 代码高亮（深色背景） ===== */
+    /* ===== JSON 代码高亮（深蓝背景） ===== */
     --dm-json-string: #A5D6FF;
     --dm-json-number: #79C0FF;
     --dm-json-literal: #FF7B72;
@@ -60,24 +73,39 @@
     --dm-finance-color: #7C3AED;
     --dm-finance-bg: #F5F3FF;
 
-    /* ===== 中性色（黑白灰体系） ===== */
-    --dm-bg-page: #F2F2F2;
-    --dm-bg-sidebar: #F5F5F5;
+    /* ===== 中性色（冷调灰，与深蓝主色协调） ===== */
+    --dm-bg-page: #F1F5F9;
+    --dm-bg-sidebar: #F8FAFC;
     --dm-bg-card: #FFFFFF;
     --dm-bg-chat: #FFFFFF;
-    --dm-bg-elevated: #EBEBEB;
-    --dm-bg-input: #F5F5F5;
-    --dm-text-primary: #1A1A1A;
-    --dm-text-secondary: #737373;
-    --dm-text-tertiary: #A3A3A3;
-    --dm-border: #E0E0E0;
-    --dm-border-light: #EBEBEB;
+    --dm-bg-elevated: #E2E8F0;
+    --dm-bg-input: #F8FAFC;
+    --dm-text-primary: #0F172A;
+    --dm-text-secondary: #475569;
+    --dm-text-tertiary: #94A3B8;
+    --dm-border: #E2E8F0;
+    --dm-border-light: #F1F5F9;
+
+    /* ===== 侧边栏（深蓝底 + 浅色文字） ===== */
+    --dm-sidebar-bg: #14275E;
+    --dm-sidebar-bg-hover: #1B3372;
+    --dm-sidebar-bg-active: #1E3A8A;
+    --dm-sidebar-text: #C7D2FE;
+    --dm-sidebar-text-active: #FFFFFF;
+    --dm-sidebar-text-muted: #8FA3D9;
+    --dm-sidebar-border: #1B3372;
+    --dm-sidebar-divider: rgba(199, 210, 254, 0.16);
+
+    /* ===== 顶部栏 ===== */
+    --dm-header-bg: #FFFFFF;
+    --dm-header-border: #E2E8F0;
 
     /* ===== 字体族 ===== */
     --dm-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                       "Helvetica Neue", Arial, "Noto Sans", sans-serif;
     --dm-font-mono: "SF Mono", "Fira Code", "JetBrains Mono", "Cascadia Code",
                     "Consolas", "Monaco", monospace;
+
 
     /* ===== 字号 ===== */
     --dm-text-3xl: 36px;
@@ -128,14 +156,15 @@
     --dm-radius-xl: 20px;
     --dm-radius-full: 50%;
 
-    /* ===== 阴影（柔和中性） ===== */
-    --dm-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
-    --dm-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
-    --dm-shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.10);
-    --dm-shadow-xl: 0 20px 50px rgba(0, 0, 0, 0.15);
+    /* ===== 阴影（柔和冷调，与深蓝主色协调） ===== */
+    --dm-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06);
+    --dm-shadow-md: 0 4px 16px rgba(15, 23, 42, 0.08);
+    --dm-shadow-lg: 0 8px 30px rgba(15, 23, 42, 0.10);
+    --dm-shadow-xl: 0 20px 50px rgba(15, 23, 42, 0.15);
     --dm-shadow-sidebar: none;
-    --dm-shadow-input: 0 1px 3px rgba(0, 0, 0, 0.05);
-    --dm-shadow-input-focus: 0 0 0 3px rgba(0, 0, 0, 0.08);
+    --dm-shadow-input: 0 1px 3px rgba(15, 23, 42, 0.05);
+    /* 聚焦环用主色 16% 透明度，替代原先的黑色环 */
+    --dm-shadow-input-focus: 0 0 0 3px rgba(30, 58, 138, 0.16);
 
     /* ===== 布局 ===== */
     --dm-sidebar-width-admin: 240px;
@@ -153,9 +182,9 @@
     --dm-transition-slow: 0.3s ease;
 
     /* ===== 代码块 ===== */
-    --dm-bg-code: #1A1A1A;
-    --dm-text-code: #E5E5E5;
-    --dm-code-inline-bg: rgba(0, 0, 0, 0.06);
+    --dm-bg-code: #14275E;
+    --dm-text-code: #E2E8F0;
+    --dm-code-inline-bg: rgba(30, 58, 138, 0.08);
     --dm-code-inline-font-size: 0.9em;
     --dm-code-copy-btn-bg: rgba(255, 255, 255, 0.1);
     --dm-code-copy-btn-hover-bg: rgba(255, 255, 255, 0.2);
@@ -165,12 +194,13 @@
     --dm-sidebar-logo-size: 32px;
 
     /* ===== Element Plus 主题覆盖 ===== */
-    --el-color-primary: #1A1A1A;
-    --el-color-primary-light-3: #404040;
-    --el-color-primary-light-5: #737373;
-    --el-color-primary-light-7: #A3A3A3;
-    --el-color-primary-light-8: #D4D4D4;
-    --el-color-primary-light-9: #EBEBEB;
+    --el-color-primary: #1E3A8A;
+    --el-color-primary-light-3: #2B4BA8;
+    --el-color-primary-light-5: #5A73C4;
+    --el-color-primary-light-7: #A5B4E8;
+    --el-color-primary-light-8: #C7D2FE;
+    --el-color-primary-light-9: #EEF2FF;
+    --el-color-primary-dark-2: #172E6E;
     --el-border-radius-base: 8px;
     --el-font-size-base: 14px;
     --el-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -231,7 +261,7 @@ body {
 }
 
 .form-input:focus {
-    border-color: var(--dm-text-primary);
+    border-color: var(--dm-primary);
     background: var(--dm-bg-card);
     box-shadow: var(--dm-shadow-input-focus);
 }
