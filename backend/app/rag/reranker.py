@@ -71,6 +71,26 @@ class DashScopeReranker(BaseReranker):
         self._api_key = settings.RERANK_API_KEY
         self._max_retries = settings.RERANK_MAX_RETRIES
         self._timeout = settings.RERANK_TIMEOUT
+        # 复用同一个 AsyncClient 以复用 TCP 连接池。
+        # 原实现在每次重试里新建 client，导致 3 次重试 = 3 次 TCP+TLS 握手，
+        # 在重试路径上额外增加数百毫秒。惰性创建，避免无请求时也占用连接。
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """获取（惰性创建）复用的 HTTP 客户端"""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(self._timeout))
+        return self._client
+
+    async def aclose(self) -> None:
+        """关闭复用的 HTTP 客户端。
+
+        进程退出或测试清理时调用，避免连接泄漏。
+        未调用时由 GC 回收，不影响正确性。
+        """
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
 
     @property
     def api_url(self) -> str:
@@ -123,6 +143,11 @@ class DashScopeReranker(BaseReranker):
             return RetrievalOutput(
                 results=fallback_results,
                 total=len(fallback_results),
+                # 透传上游字段：stats/fusion_method/query_embedding 供 Trace
+                # 可观测与后续阶段使用，丢失会使 Trace 对应列变空。
+                stats=retrieval_output.stats,
+                fusion_method=retrieval_output.fusion_method,
+                query_embedding=retrieval_output.query_embedding,
             )
 
         # 按 API 返回的 relevance_score 降序重新排列
@@ -136,6 +161,10 @@ class DashScopeReranker(BaseReranker):
         return RetrievalOutput(
             results=reranked,
             total=len(reranked),
+            # 同上：保持与粗排层一致的透传行为
+            stats=retrieval_output.stats,
+            fusion_method=retrieval_output.fusion_method,
+            query_embedding=retrieval_output.query_embedding,
         )
 
     async def _call_rerank_api(
@@ -177,20 +206,31 @@ class DashScopeReranker(BaseReranker):
         last_error = None
         for attempt in range(self._max_retries):
             try:
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(self._timeout)
-                ) as client:
-                    response = await client.post(url, json=payload, headers=headers)
+                client = self._get_client()
+                response = await client.post(url, json=payload, headers=headers)
 
-                    if response.status_code == 200:
-                        data = response.json()
-                        return self.parse_rerank_response(data, len(documents))
+                if response.status_code == 200:
+                    data = response.json()
+                    return self.parse_rerank_response(data, len(documents))
 
-                    last_error = f"HTTP {response.status_code}: {_safe_truncate(response.text)}"
-                    logger.warning(
-                        "Rerank API 调用失败 (尝试 %d/%d): %s",
-                        attempt + 1, self._max_retries, last_error,
+                last_error = f"HTTP {response.status_code}: {_safe_truncate(response.text)}"
+
+                # 4xx 是客户端错误（401 鉴权失败 / 400 参数非法 / 403 无权限），
+                # 重试不会改变结果，白白消耗 RERANK_MAX_RETRIES 次超时等待。
+                # 仅 5xx 与 429（限流）值得重试。
+                if 400 <= response.status_code < 500 and response.status_code != 429:
+                    logger.error(
+                        "Rerank API 返回不可重试的客户端错误 %d，立即降级: %s",
+                        response.status_code, last_error,
                     )
+                    raise RuntimeError(
+                        f"DashScope Rerank API 客户端错误（不可重试）: {last_error}"
+                    )
+
+                logger.warning(
+                    "Rerank API 调用失败 (尝试 %d/%d): %s",
+                    attempt + 1, self._max_retries, last_error,
+                )
 
             except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError) as e:
                 last_error = str(e)

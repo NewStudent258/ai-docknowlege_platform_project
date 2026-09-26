@@ -1,6 +1,6 @@
 """Celery 幂等锁单元测试 — 使用 Mock Redis 覆盖 acquire/release/check 全部场景"""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -185,3 +185,53 @@ class TestLockLifecycle:
             # 任务 B 尝试获取同一锁被拒绝（SET NX 返回 None）
             mock_redis.set.return_value = None
             assert acquire_idempotency_lock(1, "ingest") is False
+
+
+class TestResourceLockedError:
+    """ResourceLockedError — 抢锁失败必须可重试而非静默放弃
+
+    背景：delete 任务 soft_time_limit=300s 短于锁 TTL=600s，任务被中断后
+    重试时会发现自己上一次持有的锁尚未过期。若直接 return 普通返回值，
+    Celery 的 autoretry_for=(Exception,) 不会触发，删除会被静默放弃。
+    """
+
+    def test_异常携带资源与任务信息(self):
+        from app.ingest.lock import ResourceLockedError
+
+        err = ResourceLockedError("文档", 42, "delete")
+        assert err.resource == "文档"
+        assert err.resource_id == 42
+        assert err.task_type == "delete"
+        assert "42" in str(err)
+
+    def test_异常可被_autoretry_for_捕获(self):
+        """必须是 Exception 子类，否则 Celery autoretry_for=(Exception,) 无法捕获"""
+        from app.ingest.lock import ResourceLockedError
+
+        assert issubclass(ResourceLockedError, Exception)
+
+    @pytest.mark.asyncio
+    async def test_删除文档抢锁失败时抛异常而非返回_locked(self):
+        """_delete_document_async 抢锁失败应抛 ResourceLockedError"""
+        from app.ingest.delete_tasks import _delete_document_async
+        from app.ingest.lock import ResourceLockedError
+
+        with patch(
+            "app.ingest.delete_tasks.acquire_idempotency_lock_async",
+            new=AsyncMock(return_value=False),
+        ):
+            with pytest.raises(ResourceLockedError):
+                await _delete_document_async(42)
+
+    @pytest.mark.asyncio
+    async def test_删除知识库抢锁失败时抛异常而非返回_locked(self):
+        """_delete_kb_async 抢锁失败应抛 ResourceLockedError"""
+        from app.ingest.delete_tasks import _delete_kb_async
+        from app.ingest.lock import ResourceLockedError
+
+        with patch(
+            "app.ingest.delete_tasks.acquire_idempotency_lock_async",
+            new=AsyncMock(return_value=False),
+        ):
+            with pytest.raises(ResourceLockedError):
+                await _delete_kb_async(7)

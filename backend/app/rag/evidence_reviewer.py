@@ -159,6 +159,9 @@ def _do_review(
             # 过滤后为空（all sentences were filtered out, fallback returned original）
             # 但 stats 显示 assertive_count == 0，说明过滤后确实没有陈述句
             rejected_chunks += 1
+            # 该 chunk 被拒的原因是「全部为引用性知识」，计入 referential_chunks，
+            # 否则 EvidenceReviewResult.referential_count 恒为 0，指标失去意义。
+            referential_chunks += 1
             chunk_decisions.append(ChunkRoleDecision(
                 chunk_index=chunk_idx,
                 doc_id=doc_id,

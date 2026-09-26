@@ -62,3 +62,29 @@ Thumbs.db
 /.workbuddy/
 /scripts/generate_sample_docs.py
 /.trae/
+
+# ============================================================
+# 私有材料（严禁入库 / 严禁公开）
+# 以下内容属于个人求职与内部分析材料，包含面试话术、能力短板
+# 清单与口径校准，一旦公开会削弱项目展示效果，禁止提交。
+# ============================================================
+
+# 求职与面试准备材料
+/面试准备/
+/简历/
+/resume/
+/interview/
+docs/简历项目描述.md
+docs/简历*.md
+docs/*简历*.md
+**/简历*.md
+**/*简历*.md
+**/*面试*.md
+**/*resume*.md
+**/*interview*.md
+
+# 内部技术分析报告（含缺陷清单，仅供本地备查）
+docs/*_analysis.md
+docs/*-analysis.md
+docs/CHAT_SSE_TECHNICAL_ANALYSIS.md
+

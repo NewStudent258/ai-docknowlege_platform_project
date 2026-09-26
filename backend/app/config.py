@@ -114,7 +114,13 @@ class Settings(BaseSettings):
     MCP_PATH: str = "/mcp"
 
     # ── CoarseRank（ADR-024）──
-    COARSE_RANK_ENABLED: bool = True       # 粗排开关
+    # ⚠️ 默认关闭：强干扰评测集消融实验（kb_id=17，85 题）显示粗排为负收益
+    #    —— Hit@1 0.8471 → 0.8118，MRR 0.8970 → 0.8817。
+    #    根因是按向量相似度截断到 COARSE_TOP_K，会挤掉 BM25 独有的高价值候选，
+    #    使 RRF 融合成果退化回单路向量排序（实测与「仅向量」指标完全一致）。
+    #    精排本身已承担排序职责，故线上默认关闭。如需启用请显式设为 True。
+    #    详见 backend/ablation_eval.md 与 ARCHITECTURE.md §15.3。
+    COARSE_RANK_ENABLED: bool = False      # 粗排开关（默认关闭，见上方说明）
     COARSE_RANK_THRESHOLD: float = 0.05     # 余弦相似度最小阈值
     COARSE_TOP_K: int = 10                 # 粗排后最大候选数
 

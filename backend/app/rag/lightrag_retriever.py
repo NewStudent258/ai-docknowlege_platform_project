@@ -136,7 +136,11 @@ class LightRAGRetriever:
                     content=content,
                     # RRF 只用排名不用绝对分，此处给递减分仅用于排序可读性
                     score=1.0 / (rank + 1),
-                    page=meta.get("page_number"),
+                    # 键名必须为 "page"：入库侧 tasks.py 写入的是 meta["page"]，
+                    # 向量检索侧 retriever.py 也读 "page"。原写法 "page_number"
+                    # 在本索引中不存在，会导致本路结果的页码恒为 None，
+                    # 来源卡片丢失页码信息。
+                    page=meta.get("page"),
                     doc_name=hit["doc_name"],
                     section_title=meta.get("section_title"),
                     section_path=meta.get("section_path"),

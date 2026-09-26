@@ -66,7 +66,7 @@ class TestContentMapping:
                 "doc_id": 7,
                 "chunk_index": 0,
                 "doc_name": "薪酬管理制度.txt",
-                "metadata": {"section_title": "第二章 薪酬结构", "page_number": 1},
+                "metadata": {"section_title": "第二章 薪酬结构", "page": 1},
             }
         }
         r = _make_retriever(index)

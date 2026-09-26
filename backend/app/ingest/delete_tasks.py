@@ -15,6 +15,7 @@ from app.core.database import async_session
 from app.core.storage import local_storage
 from app.ingest.celery_app import celery_app
 from app.ingest.lock import (
+    ResourceLockedError,
     acquire_idempotency_lock_async,
     release_idempotency_lock_async,
 )
@@ -30,9 +31,12 @@ async def _delete_document_async(doc_id: int) -> dict:
     """文档异步删除实现：ChromaDB 向量清理 → 磁盘文件删除 → MySQL 物理删除（FK CASCADE 清 chunks）"""
 
     # 1. 获取幂等锁（异步上下文使用异步 Redis，避免阻塞事件循环）
+    #    抢锁失败抛可重试异常：本任务 soft_time_limit=300s 短于锁 TTL=600s，
+    #    被中断后重试时会发现自己上一次持有的锁尚未过期。若此处直接 return
+    #    普通返回值，Celery 不会触发 autoretry，删除会被静默放弃。
     if not await acquire_idempotency_lock_async(doc_id, "delete"):
-        logger.warning("文档 %d 删除幂等锁已被占用，拒绝重复入队", doc_id)
-        return {"status": "locked", "doc_id": doc_id}
+        logger.warning("文档 %d 删除幂等锁已被占用，将按退避策略重试", doc_id)
+        raise ResourceLockedError("文档", doc_id, "delete")
 
     try:
         # 2. 加载文档
@@ -127,9 +131,11 @@ async def _delete_kb_async(kb_id: int) -> dict:
     """知识库异步删除实现：遍历文档清理 ChromaDB + 磁盘 → 物理 DELETE KB（FK CASCADE 清文档/chunks）"""
 
     # 1. 获取幂等锁（异步上下文使用异步 Redis，避免阻塞事件循环）
+    #    抢锁失败抛可重试异常，与 _delete_document_async 保持一致，
+    #    避免任何任务在锁未释放时被静默放弃。
     if not await acquire_idempotency_lock_async(kb_id, "delete_kb"):
-        logger.warning("知识库 %d 删除幂等锁已被占用，拒绝重复入队", kb_id)
-        return {"status": "locked", "kb_id": kb_id}
+        logger.warning("知识库 %d 删除幂等锁已被占用，将按退避策略重试", kb_id)
+        raise ResourceLockedError("知识库", kb_id, "delete_kb")
 
     try:
         # 2. 加载 KB 并校验状态

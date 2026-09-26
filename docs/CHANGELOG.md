@@ -11,6 +11,25 @@ DocMind 项目所有重要变更。格式遵循 [Keep a Changelog](https://keepa
 
 ## [Unreleased] - 2026-06-19
 
+### Fixed
+- **删除任务静默失败修复（P0）**：
+  - **背景**：`delete_document` 的 `soft_time_limit=300s` 短于幂等锁 TTL `600s`。删除任务在第 300 秒被 Celery 中断后，Redis 锁仍被自己持有；重试时抢锁失败，原实现返回普通返回值 `{"status": "locked"}`，**不会触发 `autoretry_for=(Exception,)`**，导致删除被静默放弃——用户以为已删除，实际数据仍在
+  - **修复**：新增 `ResourceLockedError`（`app/ingest/lock.py`），删除文档与删除知识库两条路径在抢锁失败时**抛出该异常**，由 Celery 按退避策略重试，直至锁自然过期
+  - **测试**：新增 `TestResourceLockedError` 回归用例，覆盖异常语义与两条任务路径
+- **证据审查 `referential_count` 恒为 0**：`evidence_reviewer` 中 `referential_chunks` 声明后从未自增，导致 `EvidenceReviewResult.referential_count` 永远是 0，指标失真。现于「过滤后无陈述句 → REJECTED」分支正确累加
+- **LightRAG 检索页码丢失**：`lightrag_retriever` 读取的 metadata 键为 `page_number`，但入库侧 `tasks.py` 写入的是 `page`（向量检索侧同样读 `page`），导致该路结果的页码恒为 `None`，来源卡片丢失页码。现统一为 `page`
+- **Rerank 失败时不必要重试**：原实现对 4xx 客户端错误（401 鉴权失败 / 400 参数非法 / 403 无权限）同样重试 `RERANK_MAX_RETRIES` 次，白白消耗约 3s 退避等待。现仅对 5xx 与 429（限流）重试，4xx 立即降级
+- **Rerank 连接未复用**：原实现在每次重试中新建 `httpx.AsyncClient`，3 次重试 = 3 次 TCP+TLS 握手。现惰性创建并复用单一客户端（`_get_client()` / `aclose()`），`KnowledgePipeline` 为模块级单例，连接池可跨请求复用
+
+### Changed
+- **`COARSE_RANK_ENABLED` 默认值由 `True` 改为 `False`**：
+  - **依据**：强干扰评测集消融实验（`kb_id=17`，85 题参与计算）实测粗排为**负收益**——Hit@1 `0.8471 → 0.8118`，MRR `0.8970 → 0.8817`
+  - **根因**：粗排按向量相似度截断到 `COARSE_TOP_K=10`，候选池本身仅十余条时，等同于「只保留向量路高分候选」，使 RRF 融合成果退化回单路向量排序（实测指标与「仅向量」完全一致）。且精排只能调整顺序、无法召回被粗排删除的候选，故「粗排+精排」亦劣于「仅精排」
+  - **说明**：精排已承担排序职责，故线上默认关闭粗排。如需启用请显式设置 `COARSE_RANK_ENABLED=true`。详见 `backend/ablation_eval.md` 与 `docs/ARCHITECTURE.md`
+  - **配置**：`.env.example` 新增 `COARSE_RANK_ENABLED` / `COARSE_RANK_THRESHOLD` / `COARSE_TOP_K` 三项及风险说明
+- **检索管线文档同步**：`docs/ARCHITECTURE.md` 中「多阶段排序」「技术决策摘要」两处关于粗排的描述，由原先「降低噪声率」的乐观表述更新为消融实验的实测负收益结论，并指向 `ADR-024`（结论已修正）
+- **精排输出字段透传**：`DashScopeReranker.rerank()` 的成功路径与降级路径均补回 `stats` / `fusion_method` / `query_embedding` 三个上游字段，与粗排层的透传行为保持一致，避免 Trace 对应列变空
+
 ### Added
 - **运维自动化脚本（2026-07-12）**：
   - **背景**：生产环境缺乏自动化运维能力，MySQL 备份、日志轮转、服务健康检查均需手动执行

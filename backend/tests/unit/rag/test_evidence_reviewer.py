@@ -231,6 +231,8 @@ class TestTotalCounts:
         result = review_evidence(output, stats_map)
         assert result.total_chunks == 4
         assert result.assertive_count == 2
-        assert result.referential_count == 0
+        # chunk 3/4 的 assertive_count == 0，即「全部为引用性知识」被拒，
+        # 因此计入 referential_count（此前该计数器从未自增，恒为 0 是缺陷）
+        assert result.referential_count == 2
         assert result.rejected_count == 2
         assert result.decision == "ALLOW"

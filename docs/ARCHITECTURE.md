@@ -90,7 +90,7 @@
 | 完整文档太长，无法直接检索 | **智能分块** | 固定大小分块，重叠窗口保留上下文 | 检索粒度精准，不丢上下文 |
 | 大文件（100页PDF）上传后同步处理，用户等很久 | **异步入库** | Redis + Celery 异步任务 | 上传即返回，后台处理 |
 | 关键词搜索"墨盒怎么换"找不到"打印机耗材更换" | **多路检索** | 向量检索（语义）+ BM25（关键词）+ RRF 融合 | 召回率大幅提升 |
-| 搜出来的结果排序不准 | **多阶段排序** | 粗排（向量相似度过滤）+ 精排（DashScope Rerank API 语义排序） | 相关文档排在前面，噪声率降低 |
+| 搜出来的结果排序不准 | **多阶段排序** | 精排（DashScope Rerank API 语义排序）；粗排默认关闭 | 相关文档排在前面，噪声率降低 |
 | 用户连续提问"怎么申请"，系统不知道在问什么 | **问题重写** | LLM 结合对话历史补全指代和上下文 | 多轮对话不丢失意图 |
 | 用户问"今天天气"走知识库检索是浪费 | **意图识别** | 规则优先 + Flash 模型兜底：知识查询 / 闲聊 / 元问题 | 路由到正确处理分支 |
 | 长对话 30 轮后 Token 超限 | **会话记忆** | 滑动窗口 + Token 预算四池子分拆独立截断 | 记忆不丢，Token 受控，RAG 不退化 |
@@ -364,7 +364,7 @@ def ingest_document(self, doc_id):
 |:-----|:---------|:-----|
 | 多路检索 | 向量（BaseVectorStore/ChromaDB 1024 维）+ BM25（rank-bm25 + jieba）双路检索，三级缓存（进程内/Redis/MySQL） | [RAG_PIPELINE.md §2](../backend/docs/RAG_PIPELINE.md) |
 | RRF 融合 | `score(doc) = Σ 1/(k + rank_i)`，k=60，合并两路结果 | [RAG_PIPELINE.md §2.3](../backend/docs/RAG_PIPELINE.md) |
-| 粗排 | 向量相似度过滤低分 chunk + top_k 截断，降低精排噪声比，零额外 API 成本（复用 query embedding） | [ADR-024](decisions/ADR-024-粗排层.md), [RAG_PIPELINE.md §2.4](../backend/docs/RAG_PIPELINE.md) |
+| 粗排 | ⚠️ **默认关闭**（`COARSE_RANK_ENABLED=False`）。强干扰评测集实测为**负收益**：Hit@1 0.8471 → 0.8118。根因是按向量相似度截断到 top-10，会挤掉 BM25 独有候选，使 RRF 融合退化回单路向量。详见 §15.3 与 `backend/ablation_eval.md` | [ADR-024](decisions/ADR-024-粗排层.md)（结论已修正） |
 | Prompt 组装 | 宽松 Prompt 策略（Recall 优先）+ 软上限 + 相关性优先填充，Token 预算四池子分拆（见 §8 会话记忆） | [RAG_PIPELINE.md §3](../backend/docs/RAG_PIPELINE.md) |
 | SSE 事件流 | 6 事件类型（meta/thinking/message/sources/finish/error）+ 15s 心跳；sources 事件含 `confidence`/`confidence_note` 置信度字段 | [RAG_PIPELINE.md §5](../backend/docs/RAG_PIPELINE.md) |
 | Query Rewrite | 仅检查 13 个歧义信号词触发，LLM 改写 + 降级，正常路径零额外延迟 | [RAG_PIPELINE.md §4](../backend/docs/RAG_PIPELINE.md) |
