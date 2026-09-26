@@ -15,26 +15,26 @@ export function getChartColors() {
 
   return {
     // 系列色（对齐语义色 Design Token，回退值匹配 UIDESIGN.md 默认值）
-    success: get('--dm-success') || '#10B981',
-    danger: get('--dm-danger') || '#EF4444',
-    info: get('--dm-info') || '#3B82F6',
-    warning: get('--dm-warning') || '#F59E0B',
-    primary: get('--dm-primary') || '#1A1A1A',
+    success: get('--dm-success') || '#059669',
+    danger: get('--dm-danger') || '#DC2626',
+    info: get('--dm-info') || '#2563EB',
+    warning: get('--dm-warning') || '#D97706',
+    primary: get('--dm-primary') || '#1E3A8A',
 
     // Token 图表用色
-    inputToken: get('--dm-info') || '#3B82F6',
-    outputToken: get('--dm-success') || '#10B981',
+    inputToken: get('--dm-info') || '#2563EB',
+    outputToken: get('--dm-success') || '#059669',
 
     // 延迟图表用色
-    p50: get('--dm-info') || '#3B82F6',
-    p95: get('--dm-warning') || '#F59E0B',
-    p99: get('--dm-danger') || '#EF4444',
+    p50: get('--dm-info') || '#2563EB',
+    p95: get('--dm-warning') || '#D97706',
+    p99: get('--dm-danger') || '#DC2626',
 
     // 中性色（回退值匹配 Design Token 默认值）
-    textSecondary: get('--dm-text-secondary') || '#737373',
-    textTertiary: get('--dm-text-tertiary') || '#A3A3A3',
-    border: get('--dm-border') || '#E0E0E0',
-    bgPage: get('--dm-bg-page') || '#F2F2F2',
+    textSecondary: get('--dm-text-secondary') || '#475569',
+    textTertiary: get('--dm-text-tertiary') || '#94A3B8',
+    border: get('--dm-border') || '#E2E8F0',
+    bgPage: get('--dm-bg-page') || '#F1F5F9',
   }
 }
 
