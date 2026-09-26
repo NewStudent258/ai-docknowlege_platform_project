@@ -118,9 +118,11 @@ const isUsersActive = computed(() => {
 /* ===== Admin 侧边栏 ===== */
 .admin-sidebar {
   width: var(--dm-sidebar-width-admin);
-  background: var(--dm-bg-sidebar);
-  border-right: 1px solid var(--dm-border);
+  /* 与前台侧边栏统一为深蓝底，保证两个布局的视觉语言一致 */
+  background: var(--dm-sidebar-bg);
+  border-right: 1px solid var(--dm-sidebar-border);
   box-shadow: var(--dm-shadow-sidebar);
+  color: var(--dm-sidebar-text);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -129,7 +131,7 @@ const isUsersActive = computed(() => {
 
 .admin-sidebar-top {
   padding: var(--dm-space-5) var(--dm-space-4);
-  border-bottom: 1px solid var(--dm-border-light);
+  border-bottom: 1px solid var(--dm-sidebar-divider);
   display: flex;
   align-items: center;
   gap: var(--dm-space-3);
@@ -138,12 +140,13 @@ const isUsersActive = computed(() => {
 .admin-logo-icon {
   width: var(--dm-space-9);
   height: var(--dm-space-9);
-  background: var(--dm-primary);
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--dm-radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--dm-sidebar-text-active);
   font-size: var(--dm-text-sm);
   flex-shrink: 0;
 }
@@ -157,12 +160,12 @@ const isUsersActive = computed(() => {
 .admin-title {
   font-size: var(--dm-text-body);
   font-weight: var(--dm-weight-bold);
-  color: var(--dm-text-primary);
+  color: var(--dm-sidebar-text-active);
 }
 
 .admin-subtitle {
   font-size: var(--dm-text-3xs);
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
 }
 
 /* 导航 */
@@ -181,19 +184,19 @@ const isUsersActive = computed(() => {
   cursor: pointer;
   transition: all var(--dm-transition-fast);
   font-size: var(--dm-text-body);
-  color: var(--dm-text-secondary);
+  color: var(--dm-sidebar-text);
   text-decoration: none;
   margin-bottom: 2px;
 }
 
 .admin-nav-item:hover {
-  background: var(--dm-bg-page);
-  color: var(--dm-text-primary);
+  background: var(--dm-sidebar-bg-hover);
+  color: var(--dm-sidebar-text-active);
 }
 
 .admin-nav-item.active {
-  background: var(--dm-primary-light);
-  color: var(--dm-primary);
+  background: var(--dm-sidebar-bg-active);
+  color: var(--dm-sidebar-text-active);
   font-weight: var(--dm-weight-semibold);
 }
 
@@ -206,7 +209,7 @@ const isUsersActive = computed(() => {
 /* 底部返回按钮 */
 .admin-sidebar-bottom {
   padding: var(--dm-space-3) var(--dm-space-4);
-  border-top: 1px solid var(--dm-border);
+  border-top: 1px solid var(--dm-sidebar-divider);
 }
 
 .back-to-chat-btn {
@@ -219,14 +222,15 @@ const isUsersActive = computed(() => {
   cursor: pointer;
   transition: all var(--dm-transition-fast);
   font-size: var(--dm-text-body);
-  color: var(--dm-text-secondary);
+  color: var(--dm-sidebar-text);
   text-decoration: none;
-  background: var(--dm-bg-page);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .back-to-chat-btn:hover {
-  background: var(--dm-bg-chat);
-  color: var(--dm-text-primary);
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--dm-sidebar-text-active);
 }
 
 .back-to-chat-btn i {

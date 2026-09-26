@@ -652,9 +652,12 @@ async function handleChangePassword() {
 <style scoped>
 .sidebar {
   width: var(--dm-sidebar-width-chat);
-  background: var(--dm-bg-sidebar);
-  border-right: 1px solid var(--dm-border);
+  /* 深蓝底 + 浅色文字：与主色同色系，形成"品牌面板"观感，
+     与右侧浅色内容区形成明确的主次分层 */
+  background: var(--dm-sidebar-bg);
+  border-right: 1px solid var(--dm-sidebar-border);
   box-shadow: var(--dm-shadow-sidebar);
+  color: var(--dm-sidebar-text);
   display: flex;
   flex-direction: column;
   z-index: 10;
@@ -676,7 +679,7 @@ async function handleChangePassword() {
 /* ===== 顶部区域 ===== */
 .sidebar-top {
   padding: var(--dm-space-5) var(--dm-space-4);
-  border-bottom: 1px solid var(--dm-border-light);
+  border-bottom: 1px solid var(--dm-sidebar-divider);
   position: relative;
 }
 
@@ -689,7 +692,7 @@ async function handleChangePassword() {
   height: var(--dm-space-7);
   border: none;
   background: transparent;
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
   cursor: pointer;
   border-radius: var(--dm-radius-xs);
   display: flex;
@@ -701,8 +704,8 @@ async function handleChangePassword() {
 }
 
 .collapse-toggle-btn:hover {
-  background: var(--dm-bg-page);
-  color: var(--dm-text-primary);
+  background: var(--dm-sidebar-bg-hover);
+  color: var(--dm-sidebar-text-active);
 }
 
 /* Logo 区域 */
@@ -726,12 +729,14 @@ async function handleChangePassword() {
 .sidebar-logo-icon {
   width: var(--dm-sidebar-logo-size);
   height: var(--dm-sidebar-logo-size);
-  background: var(--dm-primary);
+  /* 深蓝底上用半透明白，避免与背景同色导致图标"消失" */
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--dm-radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--dm-sidebar-text-active);
   font-size: var(--dm-text-sm);
   flex-shrink: 0;
 }
@@ -753,9 +758,10 @@ async function handleChangePassword() {
   width: 100%;
   height: 38px;
   padding: 0 var(--dm-space-3_5);
-  background: var(--dm-bg-card);
-  color: var(--dm-text-primary);
-  border: 1px solid var(--dm-border);
+  /* 深蓝底上的"幽灵按钮"：半透明白底 + 浅色文字 */
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--dm-sidebar-text-active);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: var(--dm-radius-sm);
   font-size: var(--dm-text-body);
   font-weight: var(--dm-weight-medium);
@@ -768,14 +774,14 @@ async function handleChangePassword() {
 }
 
 .new-chat-btn:hover {
-  background: var(--dm-bg-page);
-  border-color: var(--dm-text-primary);
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .new-chat-btn.active {
-  background: var(--dm-primary-light);
-  color: var(--dm-primary);
-  border-color: var(--dm-primary);
+  background: var(--dm-sidebar-text-active);
+  color: var(--dm-primary-800);
+  border-color: var(--dm-sidebar-text-active);
   font-weight: var(--dm-weight-semibold);
 }
 
@@ -813,7 +819,7 @@ async function handleChangePassword() {
 .section-label {
   font-size: var(--dm-text-3xs);
   font-weight: var(--dm-weight-semibold);
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: var(--dm-space-2) var(--dm-space-3);
@@ -827,7 +833,7 @@ async function handleChangePassword() {
   justify-content: center;
   gap: var(--dm-space-2);
   padding: var(--dm-space-6) 0;
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
   font-size: var(--dm-text-xs);
 }
 
@@ -837,7 +843,7 @@ async function handleChangePassword() {
   align-items: center;
   gap: var(--dm-space-2);
   padding: var(--dm-space-8) 0;
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
 }
 
 .conv-list-empty .empty-icon {
@@ -855,7 +861,7 @@ async function handleChangePassword() {
 
 .conv-group-label {
   font-size: var(--dm-text-3xs);
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
   padding: var(--dm-space-1) var(--dm-space-3);
   font-weight: var(--dm-weight-medium);
 }
@@ -873,15 +879,15 @@ async function handleChangePassword() {
 }
 
 .conv-item:hover {
-  background: var(--dm-bg-chat);
+  background: var(--dm-sidebar-bg-hover);
 }
 
 .conv-item.active {
-  background: var(--dm-primary-light);
+  background: var(--dm-sidebar-bg-active);
 }
 
 .conv-item.active .conv-title {
-  color: var(--dm-primary);
+  color: var(--dm-sidebar-text-active);
   font-weight: var(--dm-weight-semibold);
 }
 
@@ -899,12 +905,12 @@ async function handleChangePassword() {
 .conv-icon {
   width: var(--dm-space-7);
   height: var(--dm-space-7);
-  background: var(--dm-bg-chat);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: var(--dm-radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
   font-size: var(--dm-text-2xs);
   flex-shrink: 0;
 }
@@ -916,7 +922,7 @@ async function handleChangePassword() {
 
 .conv-title {
   font-size: var(--dm-text-xs);
-  color: var(--dm-text-primary);
+  color: var(--dm-sidebar-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -924,7 +930,7 @@ async function handleChangePassword() {
 
 .conv-meta {
   font-size: var(--dm-text-3xs);
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
   margin-top: var(--dm-space-1);
 }
 
@@ -970,7 +976,7 @@ async function handleChangePassword() {
   height: var(--dm-space-6);
   border: none;
   background: transparent;
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
   cursor: pointer;
   border-radius: var(--dm-radius-xs);
   display: flex;
@@ -980,14 +986,14 @@ async function handleChangePassword() {
 }
 
 .conv-actions button:hover {
-  background: var(--dm-border);
-  color: var(--dm-text-primary);
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--dm-sidebar-text-active);
 }
 
 /* ===== 知识库导航 ===== */
 .kb-nav {
   flex-shrink: 0;
-  border-top: 1px solid var(--dm-border-light);
+  border-top: 1px solid var(--dm-sidebar-divider);
   margin-top: var(--dm-space-3);
   padding-top: var(--dm-space-1);
 }
@@ -1001,18 +1007,18 @@ async function handleChangePassword() {
   cursor: pointer;
   transition: all var(--dm-transition-fast);
   font-size: var(--dm-text-body);
-  color: var(--dm-text-secondary);
+  color: var(--dm-sidebar-text);
   text-decoration: none;
 }
 
 .nav-item:hover {
-  background: var(--dm-bg-page);
-  color: var(--dm-text-primary);
+  background: var(--dm-sidebar-bg-hover);
+  color: var(--dm-sidebar-text-active);
 }
 
 .nav-item.active {
-  background: var(--dm-primary-light);
-  color: var(--dm-primary);
+  background: var(--dm-sidebar-bg-active);
+  color: var(--dm-sidebar-text-active);
   font-weight: var(--dm-weight-semibold);
 }
 
@@ -1035,7 +1041,7 @@ async function handleChangePassword() {
 /* ===== 底部区域 ===== */
 .sidebar-bottom {
   padding: var(--dm-space-3) var(--dm-space-4);
-  border-top: 1px solid var(--dm-border);
+  border-top: 1px solid var(--dm-sidebar-divider);
 }
 
 /* 收起态 */
@@ -1053,6 +1059,10 @@ async function handleChangePassword() {
   position: relative;
 }
 
+.user-bar:hover {
+  background: var(--dm-sidebar-bg-hover);
+}
+
 /* 收起态：用户栏居中 */
 .collapsed .user-bar {
   justify-content: center;
@@ -1062,11 +1072,12 @@ async function handleChangePassword() {
   width: var(--dm-space-8);
   height: var(--dm-space-8);
   border-radius: var(--dm-radius-full);
-  background: var(--dm-text-primary);
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.24);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--dm-sidebar-text-active);
   font-size: var(--dm-text-xs);
   font-weight: var(--dm-weight-semibold);
   flex-shrink: 0;
@@ -1087,7 +1098,7 @@ async function handleChangePassword() {
 .user-name {
   font-size: var(--dm-text-xs);
   font-weight: var(--dm-weight-semibold);
-  color: var(--dm-text-primary);
+  color: var(--dm-sidebar-text-active);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1095,7 +1106,7 @@ async function handleChangePassword() {
 
 .user-role {
   font-size: var(--dm-text-3xs);
-  color: var(--dm-text-tertiary);
+  color: var(--dm-sidebar-text-muted);
 }
 
 /* ===== 用户菜单卡片 ===== */
